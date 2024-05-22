@@ -13,7 +13,9 @@ import br.com.cotiinformatica.domain.dtos.CreateUserRequestDto;
 import br.com.cotiinformatica.domain.dtos.CreateUserResponseDto;
 import br.com.cotiinformatica.domain.entities.Role;
 import br.com.cotiinformatica.domain.entities.User;
+import br.com.cotiinformatica.domain.exceptions.EmailAlreadyRegisteredException;
 import br.com.cotiinformatica.domain.interfaces.UserDomainService;
+import br.com.cotiinformatica.infrastructure.components.RabbitMQProducerComponent;
 import br.com.cotiinformatica.infrastructure.components.SHA256Component;
 import br.com.cotiinformatica.infrastructure.repositories.RoleRepository;
 import br.com.cotiinformatica.infrastructure.repositories.UserRepository;
@@ -32,6 +34,9 @@ public class UserDomainServiceImpl implements UserDomainService{
 	
 	@Autowired
 	SHA256Component sha256Component;
+	
+	@Autowired 
+	RabbitMQProducerComponent rabbitMQProducerComponent;
 
 	@Override
 	public AuthenticateUserResponseDto authenticate(AuthenticateUserRequestDto request) {
@@ -41,14 +46,25 @@ public class UserDomainServiceImpl implements UserDomainService{
 
 	@Override
 	public CreateUserResponseDto create(CreateUserRequestDto request) {
+		
+		if(userRepository.findByEmail(request.getEmail()) != null)
+			throw new EmailAlreadyRegisteredException(request.getEmail());
+
 		User user = modelMapper.map(request, User.class);
-		Role role = roleReposity.findByName("DEFAUL");
+		Role role = roleReposity.findByName("DEFAULT");
 		
 		user.setId(UUID.randomUUID());
 		user.setPassword(sha256Component.hash(request.getPassword()));
 		user.setRole(role);
 		
 		userRepository.save(user);
+		
+		try {
+			rabbitMQProducerComponent.sendMessage(user);
+		}
+		catch(Exception e) {
+			e.printStackTrace(); //TODO
+		}
 		
 		CreateUserResponseDto response = modelMapper.map(user, CreateUserResponseDto.class);
 		response.setRole(user.getRole().getName());
